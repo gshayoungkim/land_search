@@ -151,10 +151,14 @@ def parse_vworld_xml(xml_text: str) -> Dict[str, Any]:
         "stdrYear",
         "lndcgrCodeNm",
         "lndpclAr",
+        "ladUseSittnNm",
         "lnduseSittnCodeNm",
+        "prposArea1Nm",
+        "prposArea2Nm",
         "tpgrphFrmCodeNm",
         "tpgrphHgCodeNm",
         "roadSideCodeNm",
+        "pblntfPclnd",
         "prrnk",
         "lastUpdtDt",
         "jibun",
@@ -170,6 +174,10 @@ def parse_vworld_xml(xml_text: str) -> Dict[str, Any]:
             if value:
                 row[key] = value
         if row:
+            if "ladUseSittnNm" in row and "lnduseSittnCodeNm" not in row:
+                row["lnduseSittnCodeNm"] = row.get("ladUseSittnNm", "")
+            if "pblntfPclnd" in row and "prrnk" not in row:
+                row["prrnk"] = row.get("pblntfPclnd", "")
             if "spfc1" in row and "tpgrphFrmCodeNm" not in row:
                 row["tpgrphFrmCodeNm"] = row.get("spfc1", "")
             if "spfc2" in row and "tpgrphHgCodeNm" not in row:

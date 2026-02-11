@@ -366,12 +366,12 @@ export default function App() {
                   <td>{item.lndcgrCodeNm || "-"}</td>
                   <td>{item.lndpclAr || "-"}</td>
                   <td>{item.lnduseSittnCodeNm || "-"}</td>
+                  <td>{item.prposArea1Nm || "-"}</td>
+                  <td>{item.prposArea2Nm || "-"}</td>
+                  <td>{item.roadSideCodeNm || "-"}</td>
                   <td>{item.tpgrphFrmCodeNm || "-"}</td>
                   <td>{item.tpgrphHgCodeNm || "-"}</td>
-                  <td>{item.roadSideCodeNm || "-"}</td>
-                  <td>{item.spfc1 || "-"}</td>
-                  <td>{item.spfc2 || "-"}</td>
-                  <td>{item.prrnk || "-"}</td>
+                  <td>{item.pblntfPclnd || item.prrnk || "-"}</td>
                   <td>{item.lastUpdtDt || "-"}</td>
                 </tr>
               ))}
