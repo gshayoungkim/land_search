@@ -1,4 +1,5 @@
 ﻿import os
+import time
 from typing import Any, Dict, List
 from xml.etree import ElementTree
 
@@ -15,6 +16,11 @@ from .legal_codes import (
 )
 
 VWORLD_URL = "https://api.vworld.kr/ned/data/getLandCharacteristics"
+VWORLD_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; land-search/1.0; +https://vercel.app)",
+    "Accept": "application/xml,text/xml,*/*",
+    "Connection": "close",
+}
 
 
 def create_app() -> Flask:
@@ -83,11 +89,9 @@ def create_app() -> Flask:
         if domain:
             params["domain"] = domain
 
-        try:
-            resp = requests.get(VWORLD_URL, params=params, timeout=15)
-            resp.raise_for_status()
-        except requests.RequestException as exc:
-            return jsonify({"error": "VWORLD request failed", "detail": str(exc)}), 502
+        resp, err = request_vworld_with_retry(params)
+        if err is not None:
+            return jsonify({"error": "VWORLD request failed", "detail": err}), 502
 
         parsed = parse_vworld_xml(resp.text)
         parsed["request"] = {
@@ -178,6 +182,25 @@ def parse_vworld_xml(xml_text: str) -> Dict[str, Any]:
         "items": items,
         "count": len(items),
     }
+
+
+def request_vworld_with_retry(params: Dict[str, str]) -> Any:
+    last_error = ""
+    for idx in range(3):
+        try:
+            resp = requests.get(
+                VWORLD_URL,
+                params=params,
+                headers=VWORLD_HEADERS,
+                timeout=(5, 20),
+            )
+            resp.raise_for_status()
+            return resp, None
+        except requests.RequestException as exc:
+            last_error = str(exc)
+            if idx < 2:
+                time.sleep(0.5 * (idx + 1))
+    return None, last_error
 
 
 def _find_text(node: ElementTree.Element, tag: str) -> str:
