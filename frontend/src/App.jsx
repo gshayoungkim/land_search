@@ -27,6 +27,7 @@ export default function App() {
   const [codeQuery, setCodeQuery] = useState("");
   const [codeResults, setCodeResults] = useState([]);
   const [searchingCodes, setSearchingCodes] = useState(false);
+  const [codeSearched, setCodeSearched] = useState(false);
 
   const pnuPreview = useMemo(() => {
     if (!form.legalDongCode || !form.mainNo || !form.subNo) return "";
@@ -39,6 +40,16 @@ export default function App() {
   useEffect(() => {
     fetchSido();
   }, []);
+
+  async function parseJsonSafe(res) {
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { error: text };
+    }
+  }
 
   useEffect(() => {
     if (!selectedSido) {
@@ -63,7 +74,7 @@ export default function App() {
   async function fetchSido() {
     try {
       const res = await fetch(`${API_BASE}/api/legal-codes/sido`);
-      const data = await res.json();
+      const data = await parseJsonSafe(res);
       if (!res.ok) throw new Error(data.error || "시/도 목록 조회 실패");
       setSidoList(data.items || []);
     } catch (err) {
@@ -74,7 +85,7 @@ export default function App() {
   async function fetchSigungu(sidoCode) {
     try {
       const res = await fetch(`${API_BASE}/api/legal-codes/sigungu?sidoCode=${encodeURIComponent(sidoCode)}`);
-      const data = await res.json();
+      const data = await parseJsonSafe(res);
       if (!res.ok) throw new Error(data.error || "구/군 목록 조회 실패");
       setSigunguList(data.items || []);
       setSelectedSigungu("");
@@ -90,7 +101,7 @@ export default function App() {
       const res = await fetch(
         `${API_BASE}/api/legal-codes/eupmyeondong?sigunguCode=${encodeURIComponent(sigunguCode)}`
       );
-      const data = await res.json();
+      const data = await parseJsonSafe(res);
       if (!res.ok) throw new Error(data.error || "동/읍/면 목록 조회 실패");
       setEupmyeondongList(data.items || []);
       setSelectedEupmyeondong("");
@@ -114,9 +125,10 @@ export default function App() {
   async function searchLegalCodes() {
     setSearchingCodes(true);
     setError("");
+    setCodeSearched(true);
     try {
       const res = await fetch(`${API_BASE}/api/legal-codes?q=${encodeURIComponent(codeQuery)}&limit=30`);
-      const data = await res.json();
+      const data = await parseJsonSafe(res);
       if (!res.ok) throw new Error(data.error || "법정동코드 조회에 실패했습니다.");
       setCodeResults(data.items || []);
     } catch (err) {
@@ -152,7 +164,7 @@ export default function App() {
           subNo: form.subNo,
         }),
       });
-      const data = await res.json();
+      const data = await parseJsonSafe(res);
       if (!res.ok) throw new Error(data.error || "조회에 실패했습니다.");
       setResult(data);
     } catch (err) {
@@ -278,16 +290,22 @@ export default function App() {
 
       <section className="card">
         <h2>법정동코드 검색</h2>
-        <div className="row">
+        <form
+          className="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            searchLegalCodes();
+          }}
+        >
           <input
             value={codeQuery}
             onChange={(e) => setCodeQuery(e.target.value)}
             placeholder="예: 수원 영통구 또는 41220"
           />
-          <button type="button" onClick={searchLegalCodes} disabled={searchingCodes}>
+          <button type="submit" disabled={searchingCodes}>
             {searchingCodes ? "검색 중..." : "검색"}
           </button>
-        </div>
+        </form>
 
         {codeResults.length > 0 && (
           <table>
@@ -309,6 +327,7 @@ export default function App() {
             </tbody>
           </table>
         )}
+        {codeSearched && codeResults.length === 0 && <p>검색 결과가 없습니다. 다른 키워드로 시도해 주세요.</p>}
       </section>
 
       {error && <section className="card error">{error}</section>}
