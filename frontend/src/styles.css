@@ -1,0 +1,129 @@
+:root {
+  font-family: "Pretendard", "Noto Sans KR", sans-serif;
+  color: #0f172a;
+  background: linear-gradient(140deg, #f8fafc 0%, #eef2ff 40%, #ecfeff 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.05);
+}
+
+h1, h2 {
+  margin: 0 0 10px;
+}
+
+.sub {
+  margin: 0 0 14px;
+  color: #334155;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+
+input, select, button {
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  padding: 10px 12px;
+  font-size: 14px;
+  background: #fff;
+}
+
+button {
+  background: #0f766e;
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.checkbox {
+  align-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pnu {
+  align-self: end;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f1f5f9;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.dropdown-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: auto;
+  display: block;
+}
+
+th, td {
+  border: 1px solid #e2e8f0;
+  padding: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+tbody tr:hover {
+  background: #f8fafc;
+}
+
+.error {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #9f1239;
+}
+
+@media (max-width: 900px) {
+  .dropdown-grid,
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
