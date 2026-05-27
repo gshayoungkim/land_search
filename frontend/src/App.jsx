@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
@@ -24,10 +24,13 @@ export default function App() {
   const [selectedSigungu, setSelectedSigungu] = useState("");
   const [selectedEupmyeondong, setSelectedEupmyeondong] = useState("");
 
+  // 모달 상태
+  const [modalOpen, setModalOpen] = useState(false);
   const [codeQuery, setCodeQuery] = useState("");
   const [codeResults, setCodeResults] = useState([]);
   const [searchingCodes, setSearchingCodes] = useState(false);
   const [codeSearched, setCodeSearched] = useState(false);
+  const modalInputRef = useRef(null);
 
   const pnuPreview = useMemo(() => {
     if (!form.legalDongCode || !form.mainNo || !form.subNo) return "";
@@ -39,6 +42,22 @@ export default function App() {
 
   useEffect(() => {
     fetchSido();
+  }, []);
+
+  // 모달 열릴 때 input 포커스
+  useEffect(() => {
+    if (modalOpen && modalInputRef.current) {
+      setTimeout(() => modalInputRef.current?.focus(), 50);
+    }
+  }, [modalOpen]);
+
+  // ESC 키로 모달 닫기
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === "Escape") setModalOpen(false);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, []);
 
   async function parseJsonSafe(res) {
@@ -114,7 +133,6 @@ export default function App() {
     setSelectedEupmyeondong(code);
     const picked = eupmyeondongList.find((item) => item.code === code);
     if (!picked) return;
-
     setForm((prev) => ({
       ...prev,
       legalDongCode: picked.code,
@@ -123,8 +141,8 @@ export default function App() {
   }
 
   async function searchLegalCodes() {
+    if (!codeQuery.trim()) return;
     setSearchingCodes(true);
-    setError("");
     setCodeSearched(true);
     try {
       const res = await fetch(`${API_BASE}/api/legal-codes?q=${encodeURIComponent(codeQuery)}&limit=30`);
@@ -144,6 +162,17 @@ export default function App() {
       legalDongCode: item.code,
       legalDongName: item.name,
     }));
+    setModalOpen(false);
+    setCodeQuery("");
+    setCodeResults([]);
+    setCodeSearched(false);
+  }
+
+  function openModal() {
+    setCodeQuery("");
+    setCodeResults([]);
+    setCodeSearched(false);
+    setModalOpen(true);
   }
 
   async function handleSubmit(e) {
@@ -240,13 +269,18 @@ export default function App() {
 
           <label>
             법정동코드(10자리)
-            <input
-              value={form.legalDongCode}
-              onChange={(e) => setForm((p) => ({ ...p, legalDongCode: e.target.value }))}
-              placeholder="예: 4122010600"
-              inputMode="numeric"
-              required
-            />
+            <div className="code-input-row">
+              <input
+                value={form.legalDongCode}
+                onChange={(e) => setForm((p) => ({ ...p, legalDongCode: e.target.value }))}
+                placeholder="예: 4122010600"
+                inputMode="numeric"
+                required
+              />
+              <button type="button" className="btn-search-code" onClick={openModal}>
+                검색
+              </button>
+            </div>
           </label>
 
           <label>
@@ -286,48 +320,6 @@ export default function App() {
             {loading ? "조회 중..." : "토지특성 조회"}
           </button>
         </form>
-      </section>
-
-      <section className="card">
-        <h2>법정동코드 검색</h2>
-        <form
-          className="row"
-          onSubmit={(e) => {
-            e.preventDefault();
-            searchLegalCodes();
-          }}
-        >
-          <input
-            value={codeQuery}
-            onChange={(e) => setCodeQuery(e.target.value)}
-            placeholder="예: 수원 영통구 또는 41220"
-          />
-          <button type="submit" disabled={searchingCodes}>
-            {searchingCodes ? "검색 중..." : "검색"}
-          </button>
-        </form>
-
-        {codeResults.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>법정동코드</th>
-                <th>법정동명</th>
-                <th>폐지여부</th>
-              </tr>
-            </thead>
-            <tbody>
-              {codeResults.map((item) => (
-                <tr key={item.code} onClick={() => applyCode(item)}>
-                  <td>{item.code}</td>
-                  <td>{item.name}</td>
-                  <td>{item.status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        {codeSearched && codeResults.length === 0 && <p>검색 결과가 없습니다. 다른 키워드로 시도해 주세요.</p>}
       </section>
 
       {error && <section className="card error">{error}</section>}
@@ -379,7 +371,65 @@ export default function App() {
           </table>
         </section>
       )}
+
+      {/* 법정동코드 검색 모달 */}
+      {modalOpen && (
+        <div className="modal-overlay" onClick={() => setModalOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>법정동코드 검색</h2>
+              <button type="button" className="modal-close" onClick={() => setModalOpen(false)}>✕</button>
+            </div>
+
+            <form
+              className="modal-search-row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                searchLegalCodes();
+              }}
+            >
+              <input
+                ref={modalInputRef}
+                value={codeQuery}
+                onChange={(e) => setCodeQuery(e.target.value)}
+                placeholder="예: 수원 영통구 또는 41220"
+              />
+              <button type="submit" disabled={searchingCodes}>
+                {searchingCodes ? "검색 중..." : "검색"}
+              </button>
+            </form>
+
+            <div className="modal-body">
+              {codeResults.length > 0 && (
+                <table className="modal-table">
+                  <thead>
+                    <tr>
+                      <th>법정동코드</th>
+                      <th>법정동명</th>
+                      <th>폐지여부</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {codeResults.map((item) => (
+                      <tr key={item.code} onClick={() => applyCode(item)} className="clickable-row">
+                        <td>{item.code}</td>
+                        <td>{item.name}</td>
+                        <td>{item.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {codeSearched && !searchingCodes && codeResults.length === 0 && (
+                <p className="modal-empty">검색 결과가 없습니다. 다른 키워드로 시도해 주세요.</p>
+              )}
+              {!codeSearched && (
+                <p className="modal-hint">지역명 또는 코드 일부를 입력 후 검색하세요.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
-
