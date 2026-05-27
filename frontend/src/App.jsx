@@ -11,7 +11,7 @@ const initialForm = {
   legalDongName: "",
   mountain: false,
   mainNo: "",
-  subNo: "",
+  subNo: "0",
 };
 
 export default function App() {
@@ -193,7 +193,7 @@ export default function App() {
           legalDongCode: form.legalDongCode,
           mountain: form.mountain,
           mainNo: form.mainNo,
-          subNo: form.subNo,
+          subNo: form.subNo.trim() === "" ? "0" : form.subNo,
         }),
       });
       const data = await parseJsonSafe(res);
