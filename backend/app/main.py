@@ -1,4 +1,4 @@
-﻿import os
+import os
 import time
 from typing import Any, Dict, List
 from xml.etree import ElementTree
@@ -32,6 +32,82 @@ def create_app() -> Flask:
     @app.get("/api/health")
     def health() -> Any:
         return jsonify({"ok": True})
+
+    @app.get("/api/config")
+    def config_api() -> Any:
+        return jsonify({
+            "kakaoAppKey": os.getenv("KAKAO_APP_KEY", ""),
+            "vworldApiKey": os.getenv("VWORLD_API_KEY", ""),
+        })
+
+    @app.get("/api/wfs")
+    def wfs_api() -> Any:
+        typename = request.args.get("typename", "").strip()
+        bbox = request.args.get("bbox", "").strip()
+        if not typename or not bbox:
+            return jsonify({"error": "typename and bbox are required"}), 400
+        api_key = os.getenv("VWORLD_API_KEY", "").strip()
+        domain = os.getenv("VWORLD_DOMAIN", "").strip()
+        if not api_key:
+            return jsonify({"error": "VWORLD_API_KEY is not configured"}), 500
+        url = (
+            f"https://api.vworld.kr/req/wfs?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature"
+            f"&TYPENAME={typename}&SRSNAME=EPSG:4326&OUTPUT=application/json"
+            f"&BBOX={bbox},EPSG:4326&COUNT=50"
+            f"&KEY={api_key}&DOMAIN={domain}"
+        )
+        try:
+            resp = requests.get(url, timeout=(5, 20))
+            text = resp.text
+            if text.strip().startswith("<"):
+                return jsonify({"error": f"Vworld WFS error: {text[:200]}"}), 502
+            from flask import Response
+            return Response(text, status=resp.status_code, mimetype="application/json")
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.get("/api/search")
+    def search_api() -> Any:
+        query = request.args.get("query", "").strip()
+        if not query:
+            return jsonify({"error": "query is required"}), 400
+        api_key = os.getenv("VWORLD_API_KEY", "").strip()
+        domain = os.getenv("VWORLD_DOMAIN", "").strip()
+        url = (
+            f"https://api.vworld.kr/req/search?SERVICE=search&REQUEST=search&VERSION=2.0"
+            f"&crs=EPSG:4326&size=10&page=1&query={query}"
+            f"&type=ADDRESS&category=PARCEL"
+            f"&KEY={api_key}&DOMAIN={domain}"
+        )
+        try:
+            resp = requests.get(url, timeout=(5, 20))
+            return jsonify(resp.json()), resp.status_code
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.get("/api/proxy")
+    def image_proxy() -> Any:
+        url = request.args.get("url", "").strip()
+        if not url:
+            return jsonify({"error": "url is required"}), 400
+        
+        allowed_domains = ["daumcdn.net", "kakao.com", "kakaocdn.net", "vworld.kr", "api.vworld.kr"]
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(url)
+            domain = parsed.netloc
+            if not any(domain.endswith(d) for d in allowed_domains):
+                return jsonify({"error": "Forbidden domain"}), 403
+            
+            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=(5, 10))
+            from flask import Response
+            response = Response(resp.content, status=resp.status_code, mimetype=resp.headers.get("Content-Type", "image/png"))
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            return response
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 502
+
+
 
     @app.get("/api/legal-codes")
     def legal_codes_api() -> Any:

@@ -20,6 +20,40 @@ body {
   gap: 16px;
 }
 
+/* 탭 네비게이션 */
+.tab-nav {
+  display: flex;
+  gap: 4px;
+  background: #fff;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.05);
+}
+
+.tab-item {
+  flex: 1;
+  text-align: center;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+  cursor: pointer;
+}
+
+.tab-item:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.tab-item.active {
+  background: #0f766e;
+  color: #fff;
+}
+
 .card {
   background: #ffffff;
   border: 1px solid #dbeafe;

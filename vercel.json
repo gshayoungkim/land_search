@@ -5,19 +5,27 @@
   "functions": {
     "api/index.py": {
       "maxDuration": 30
+    },
+    "api/config.js": {
+      "maxDuration": 10
+    },
+    "api/wfs.js": {
+      "maxDuration": 30
+    },
+    "api/search.js": {
+      "maxDuration": 10
+    },
+    "api/proxy.js": {
+      "maxDuration": 15
     }
   },
   "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/index.py"
-    },
-    {
-      "handle": "filesystem"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/index.html"
-    }
+    { "src": "/api/config", "dest": "/api/config.js" },
+    { "src": "/api/wfs", "dest": "/api/wfs.js" },
+    { "src": "/api/search", "dest": "/api/search.js" },
+    { "src": "/api/proxy", "dest": "/api/proxy.js" },
+    { "src": "/api/(.*)", "dest": "/api/index.py" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }

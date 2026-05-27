@@ -208,6 +208,11 @@ export default function App() {
 
   return (
     <main className="page">
+      <nav className="tab-nav">
+        <a className="tab-item active" href="/">🔍 토지이용계획 검색</a>
+        <a className="tab-item" href="/map.html" target="_blank" rel="noopener noreferrer">🗺️ 지적도 시각화</a>
+      </nav>
+
       <section className="card">
         <h1>토지이용계획 검색기</h1>
         <p className="sub">법정동코드는 드롭다운 선택 또는 검색으로 입력할 수 있습니다.</p>
