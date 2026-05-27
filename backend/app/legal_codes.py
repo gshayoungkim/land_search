@@ -1,4 +1,4 @@
-﻿import csv
+import csv
 from pathlib import Path
 from typing import Dict, List
 
@@ -37,6 +37,8 @@ def search_legal_codes(rows: List[Dict[str, str]], q: str, limit: int) -> List[D
         for r in rows
         if q_lower in r["name"].lower() or q_lower in r["code"].lower()
     ]
+    # '존재' 항목을 상위에 노출
+    filtered.sort(key=lambda r: 0 if r["status"] == "존재" else 1)
     return filtered[:limit]
 
 

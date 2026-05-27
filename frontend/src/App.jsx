@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = Array.from({ length: CURRENT_YEAR - 2009 }, (_, i) => CURRENT_YEAR - i);
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
 const initialForm = {
@@ -258,13 +261,15 @@ export default function App() {
         <form onSubmit={handleSubmit} className="form-grid">
           <label>
             기준연도
-            <input
+            <select
               value={form.stdrYear}
               onChange={(e) => setForm((p) => ({ ...p, stdrYear: e.target.value }))}
-              placeholder="예: 2025"
-              inputMode="numeric"
               required
-            />
+            >
+              {YEAR_OPTIONS.map((y) => (
+                <option key={y} value={y}>{y}년</option>
+              ))}
+            </select>
           </label>
 
           <label>
@@ -299,9 +304,9 @@ export default function App() {
             <input
               value={form.subNo}
               onChange={(e) => setForm((p) => ({ ...p, subNo: e.target.value }))}
-              placeholder="예: 2"
+              onBlur={() => setForm((p) => ({ ...p, subNo: p.subNo.trim() === "" ? "0" : p.subNo }))}
+              placeholder="비워두면 0"
               inputMode="numeric"
-              required
             />
           </label>
 
