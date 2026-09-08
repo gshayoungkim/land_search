@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>한국 지번 토지 구획 시각화</title>
 <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; background: #1a1a2e; color: #e0e0e0; overflow: hidden; }
@@ -169,6 +170,68 @@
   .parcel-del-btn:hover { background: #5a2a2a; }
 
   #empty-state { text-align: center; padding: 40px 20px; color: #555; font-size: 12px; line-height: 1.8; }
+
+  /* Batch capture drawer */
+  .batch-open-btn { flex-basis: 100%; color: #d7e8ff; border-color: #3d6b9e; background: #294b73; }
+  .batch-open-btn:hover { background: #365f8d; }
+  #batch-panel {
+    position: fixed; top: 56px; right: 12px; bottom: 12px; z-index: 90;
+    width: min(400px, calc(100vw - 24px));
+    display: none; flex-direction: column;
+    background: rgba(22,33,62,0.98); border: 1px solid #3a4f70; border-radius: 12px;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.4); overflow: hidden;
+    backdrop-filter: blur(10px);
+  }
+  #batch-panel.open { display: flex; }
+  .batch-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid #2a3a5a; }
+  .batch-header h2 { font-size: 15px; color: #cfe2f7; }
+  .batch-close { border: 0; background: transparent; color: #8498b2; font-size: 20px; cursor: pointer; padding: 2px 6px; }
+  .batch-close:hover { color: #fff; }
+  .batch-body { padding: 14px 16px 18px; overflow-y: auto; }
+  .batch-label { display: block; margin-bottom: 7px; color: #a0b8d8; font-size: 12px; font-weight: 600; }
+  #batch-addresses {
+    width: 100%; min-height: 150px; resize: vertical; padding: 10px 12px;
+    border: 1px solid #3a4f70; border-radius: 8px; outline: none;
+    background: #111b33; color: #e4edf8; font: inherit; line-height: 1.55;
+  }
+  #batch-addresses:focus { border-color: #6c8ebf; }
+  #batch-addresses:disabled { opacity: 0.65; }
+  .batch-meta { display: flex; justify-content: space-between; gap: 10px; margin: 7px 0 12px; color: #788da8; font-size: 11px; }
+  .batch-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .batch-btn { padding: 9px 10px; border: 1px solid #3b5274; border-radius: 7px; background: #315d8c; color: #fff; cursor: pointer; font-size: 12px; }
+  .batch-btn:hover:not(:disabled) { background: #3d70a5; }
+  .batch-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .batch-btn.stop { background: #6d3038; border-color: #87424b; }
+  .batch-btn.stop:hover:not(:disabled) { background: #85404a; }
+  .batch-btn.download { grid-column: 1 / -1; background: #28664f; border-color: #397e65; }
+  .batch-btn.download:hover:not(:disabled) { background: #347a60; }
+  .batch-btn.clear-memory { grid-column: 1 / -1; background: #28354a; border-color: #43536b; color: #b9c8da; }
+  .batch-btn.clear-memory:hover:not(:disabled) { background: #34445d; }
+  .batch-progress-wrap { margin-top: 16px; padding-top: 14px; border-top: 1px solid #2a3a5a; }
+  .batch-current { min-height: 34px; color: #c6d7ea; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+  #batch-progress { width: 100%; height: 9px; margin: 8px 0 6px; accent-color: #5c8fc4; }
+  .batch-progress-row { display: flex; justify-content: space-between; color: #8298b4; font-size: 11px; }
+  .batch-counts { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; }
+  .batch-success { color: #79c99f; }
+  .batch-failure { color: #e58b94; }
+  #batch-failures { margin-top: 12px; display: none; }
+  #batch-failures.open { display: block; }
+  #batch-failures summary { color: #e2a1a7; cursor: pointer; font-size: 12px; }
+  #batch-failure-list { margin: 8px 0 0 18px; color: #b9c5d3; font-size: 11px; line-height: 1.5; }
+  .batch-note { margin-top: 13px; color: #667d99; font-size: 10px; line-height: 1.5; }
+
+  /* Kakao Maps must have layout dimensions to render. Keep the capture map off-screen, not display:none. */
+  #batch-capture-host {
+    position: fixed; left: -20000px; top: 0; z-index: -1;
+    width: 1600px; height: 1000px; overflow: hidden;
+    pointer-events: none; background: #e9edf2;
+  }
+  #batch-capture-map { position: absolute; inset: 0; }
+  #batch-capture-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+
+  @media (max-width: 640px) {
+    #batch-panel { top: 50px; right: 6px; bottom: 6px; width: calc(100vw - 12px); }
+  }
 </style>
 </head>
 <body>
@@ -210,6 +273,7 @@
       <button class="action-btn" id="btn-deselect-all">전체 해제</button>
       <button class="action-btn" id="btn-save">💾 저장</button>
       <button class="action-btn danger" id="btn-clear">초기화</button>
+      <button class="action-btn batch-open-btn" id="btn-batch-capture">📦 주소 일괄 캡처</button>
     </div>
     <div id="folder-bar" style="
       padding: 6px 14px; border-bottom: 1px solid #2a2a4a;
@@ -227,6 +291,49 @@
   </div>
 </div>
 
+<aside id="batch-panel" aria-hidden="true">
+  <div class="batch-header">
+    <h2>주소 일괄 캡처</h2>
+    <button class="batch-close" id="batch-close" type="button" aria-label="닫기">×</button>
+  </div>
+  <div class="batch-body">
+    <label class="batch-label" for="batch-addresses">주소 목록 (한 줄에 하나)</label>
+    <textarea id="batch-addresses" placeholder="서울특별시 중구 세종대로 110&#10;경기도 수원시 팔달구 효원로 1"></textarea>
+    <div class="batch-meta">
+      <span id="batch-address-count">0개 주소</span>
+      <span>빈 줄·중복 자동 제거</span>
+    </div>
+    <div class="batch-actions">
+      <button class="batch-btn" id="batch-start" type="button" disabled>캡처 시작</button>
+      <button class="batch-btn stop" id="batch-stop" type="button" disabled>중지</button>
+      <button class="batch-btn download" id="batch-download" type="button" disabled>ZIP 다운로드</button>
+      <button class="batch-btn clear-memory" id="batch-clear-memory" type="button" disabled>결과 메모리 지우기</button>
+    </div>
+    <div class="batch-progress-wrap">
+      <div class="batch-current" id="batch-current">주소를 입력하고 캡처를 시작하세요.</div>
+      <progress id="batch-progress" max="1" value="0"></progress>
+      <div class="batch-progress-row">
+        <span id="batch-progress-text">0 / 0</span>
+        <span id="batch-progress-percent">0%</span>
+      </div>
+      <div class="batch-counts">
+        <span class="batch-success" id="batch-success">성공 0건</span>
+        <span class="batch-failure" id="batch-failure">실패 0건</span>
+      </div>
+      <details id="batch-failures">
+        <summary>실패 목록</summary>
+        <ul id="batch-failure-list"></ul>
+      </details>
+    </div>
+    <p class="batch-note">1600×1000 HYBRID 위성지도와 지적도·대상 필지 오버레이를 별도 지도에서 순차 생성합니다. 메인 지도 위치와 선택 상태는 바뀌지 않습니다.</p>
+  </div>
+</aside>
+
+<div id="batch-capture-host" aria-hidden="true">
+  <div id="batch-capture-map"></div>
+  <canvas id="batch-capture-overlay"></canvas>
+</div>
+
 <script>
 // ─── State ────────────────────────────────────────────────────────────────────
 const state = {
@@ -237,7 +344,29 @@ const state = {
   loadingWfs: false,
   lastWfsBounds: null,
   dirHandle: null,      // File System Access API directory handle
+  captureMap: null,
+  captureJob: null,
+  captureZipBlob: null,
 };
+
+const CAPTURE_CONFIG = Object.freeze({
+  width: 1600,
+  height: 1000,
+  mapLevel: 3,
+  renderTimeoutMs: 7000,
+  tileSettleMs: 350,
+  addressThrottleMs: 250,
+  filenameMaxLength: 120,
+  crop: Object.freeze({ widthRatio: 0.40, heightRatio: 0.40, centerXRatio: 0.50, centerYRatio: 0.50 }),
+  crop2: Object.freeze({ widthRatio: 0.20, heightRatio: 0.34, centerXRatio: 0.50, centerYRatio: 0.50 }),
+});
+
+class CaptureCancelledError extends Error {
+  constructor() {
+    super('사용자가 캡처를 중지했습니다.');
+    this.name = 'CaptureCancelledError';
+  }
+}
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 function showToast(msg, duration = 3000) {
@@ -312,6 +441,7 @@ async function boot() {
   }
 
   initMap();
+  initBatchCaptureMap();
 }
 
 function loadKakaoSdk(appKey) {
@@ -510,9 +640,9 @@ function clearWfsLayer() {
 }
 
 // ─── API Helpers ──────────────────────────────────────────────────────────────
-async function wfsFetch(typename, bbox) {
+async function wfsFetch(typename, bbox, fetchOptions = {}) {
   const url = `/api/wfs?typename=${encodeURIComponent(typename)}&bbox=${encodeURIComponent(bbox)}`;
-  const r = await fetch(url);
+  const r = await fetch(url, fetchOptions);
   const data = await r.json();
   if (!r.ok) throw new Error(data.error || `WFS ${r.status}`);
   if (data.error) throw new Error(data.error);
@@ -873,6 +1003,494 @@ function renderSearchResults(items) {
       }
     });
   });
+}
+
+// ─── Batch Address Capture ────────────────────────────────────────────────────
+const batchElements = {
+  panel: document.getElementById('batch-panel'),
+  addresses: document.getElementById('batch-addresses'),
+  addressCount: document.getElementById('batch-address-count'),
+  start: document.getElementById('batch-start'),
+  stop: document.getElementById('batch-stop'),
+  download: document.getElementById('batch-download'),
+  clearMemory: document.getElementById('batch-clear-memory'),
+  current: document.getElementById('batch-current'),
+  progress: document.getElementById('batch-progress'),
+  progressText: document.getElementById('batch-progress-text'),
+  progressPercent: document.getElementById('batch-progress-percent'),
+  success: document.getElementById('batch-success'),
+  failure: document.getElementById('batch-failure'),
+  failures: document.getElementById('batch-failures'),
+  failureList: document.getElementById('batch-failure-list'),
+  captureHost: document.getElementById('batch-capture-host'),
+  captureOverlay: document.getElementById('batch-capture-overlay'),
+};
+
+document.getElementById('btn-batch-capture').onclick = () => setBatchPanelOpen(true);
+document.getElementById('batch-close').onclick = () => setBatchPanelOpen(false);
+batchElements.addresses.addEventListener('input', updateBatchAddressCount);
+batchElements.start.onclick = startBatchCapture;
+batchElements.stop.onclick = cancelBatchCapture;
+batchElements.download.onclick = downloadZip;
+batchElements.clearMemory.onclick = clearBatchCaptureMemory;
+
+function setBatchPanelOpen(open) {
+  batchElements.panel.classList.toggle('open', open);
+  batchElements.panel.setAttribute('aria-hidden', String(!open));
+  if (open && !state.captureJob) batchElements.addresses.focus();
+}
+
+function parseAddresses(rawText = batchElements.addresses.value) {
+  const seen = new Set();
+  return rawText
+    .split(/\r?\n/)
+    .map(address => address.trim().replace(/\s+/g, ' '))
+    .filter(address => address && !seen.has(address) && seen.add(address));
+}
+
+function sanitizeFilename(value, fallback = 'address') {
+  const reserved = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+  let name = value
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '')
+    .slice(0, CAPTURE_CONFIG.filenameMaxLength)
+    .replace(/[. ]+$/g, '');
+  if (!name) name = fallback;
+  if (reserved.test(name)) name = `_${name}`;
+  return name;
+}
+
+function allocateFilenames(addresses) {
+  const used = new Map();
+  return addresses.map(address => {
+    const base = sanitizeFilename(address);
+    const count = (used.get(base.toLocaleLowerCase()) || 0) + 1;
+    used.set(base.toLocaleLowerCase(), count);
+    if (count === 1) return base;
+    const suffix = `_${count}`;
+    return `${base.slice(0, CAPTURE_CONFIG.filenameMaxLength - suffix.length)}${suffix}`;
+  });
+}
+
+function updateBatchAddressCount() {
+  const count = parseAddresses().length;
+  batchElements.addressCount.textContent = `${count}개 주소`;
+  batchElements.start.disabled = count === 0 || !!state.captureJob || !state.captureMap || !window.JSZip;
+}
+
+function initBatchCaptureMap() {
+  const container = document.getElementById('batch-capture-map');
+  batchElements.captureHost.style.width = `${CAPTURE_CONFIG.width}px`;
+  batchElements.captureHost.style.height = `${CAPTURE_CONFIG.height}px`;
+  state.captureMap = new kakao.maps.Map(container, {
+    center: new kakao.maps.LatLng(37.5665, 126.9780),
+    level: CAPTURE_CONFIG.mapLevel,
+    draggable: false,
+    scrollwheel: false,
+    disableDoubleClick: true,
+  });
+  state.captureMap.setMapTypeId(kakao.maps.MapTypeId.HYBRID);
+  state.captureMap.relayout();
+  if (!window.JSZip) {
+    batchElements.current.textContent = 'ZIP 라이브러리를 불러오지 못했습니다. 페이지를 새로고침해 주세요.';
+  }
+  updateBatchAddressCount();
+}
+
+function assertCaptureActive(job) {
+  if (!job || job.cancelled || state.captureJob !== job) throw new CaptureCancelledError();
+}
+
+function geocodeAddress(address, job) {
+  return new Promise((resolve, reject) => {
+    assertCaptureActive(job);
+    const geocoder = new kakao.maps.services.Geocoder();
+    geocoder.addressSearch(address, (results, status) => {
+      try {
+        assertCaptureActive(job);
+        if (status === kakao.maps.services.Status.OK && results.length) {
+          resolve({ lat: Number(results[0].y), lng: Number(results[0].x) });
+          return;
+        }
+
+        const places = new kakao.maps.services.Places();
+        places.keywordSearch(address, (placeResults, placeStatus) => {
+          try {
+            assertCaptureActive(job);
+            if (placeStatus === kakao.maps.services.Status.OK && placeResults.length) {
+              resolve({ lat: Number(placeResults[0].y), lng: Number(placeResults[0].x) });
+            } else {
+              reject(new Error('geocoding 결과 없음'));
+            }
+          } catch (error) {
+            reject(error);
+          }
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
+function waitForMapRender(map, job, updateMap) {
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    let idleSeen = false;
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      clearInterval(cancelPoll);
+      kakao.maps.event.removeListener(map, 'idle', onIdle);
+    };
+    const finish = (error) => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      error ? reject(error) : resolve();
+    };
+    const settle = async () => {
+      if (idleSeen) return;
+      idleSeen = true;
+      try {
+        await waitForCaptureTiles(job);
+        finish();
+      } catch (error) {
+        finish(error);
+      }
+    };
+    const onIdle = () => settle();
+    const timeout = setTimeout(() => settle(), CAPTURE_CONFIG.renderTimeoutMs);
+    const cancelPoll = setInterval(() => {
+      if (job.cancelled) finish(new CaptureCancelledError());
+    }, 100);
+
+    kakao.maps.event.addListener(map, 'idle', onIdle);
+    try {
+      updateMap();
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
+async function waitForCaptureTiles(job) {
+  assertCaptureActive(job);
+  const images = [...batchElements.captureHost.querySelectorAll('img')];
+  const pending = images.filter(image => !image.complete);
+  if (pending.length) {
+    await Promise.race([
+      Promise.all(pending.map(image => new Promise(resolve => {
+        image.addEventListener('load', resolve, { once: true });
+        image.addEventListener('error', resolve, { once: true });
+      }))),
+      new Promise(resolve => setTimeout(resolve, CAPTURE_CONFIG.renderTimeoutMs)),
+    ]);
+  }
+  assertCaptureActive(job);
+  await delayWithCancellation(CAPTURE_CONFIG.tileSettleMs, job);
+}
+
+async function moveCaptureMap(lat, lng, job) {
+  const center = new kakao.maps.LatLng(lat, lng);
+  await waitForMapRender(state.captureMap, job, () => {
+    state.captureMap.relayout();
+    state.captureMap.setMapTypeId(kakao.maps.MapTypeId.HYBRID);
+    state.captureMap.setLevel(CAPTURE_CONFIG.mapLevel);
+    state.captureMap.setCenter(center);
+  });
+}
+
+function captureMapBbox() {
+  const bounds = state.captureMap.getBounds();
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+  return `${sw.getLat().toFixed(6)},${sw.getLng().toFixed(6)},${ne.getLat().toFixed(6)},${ne.getLng().toFixed(6)}`;
+}
+
+async function fetchTargetParcel(lat, lng, signal) {
+  const delta = 0.0002;
+  const bbox = `${(lat - delta).toFixed(6)},${(lng - delta).toFixed(6)},${(lat + delta).toFixed(6)},${(lng + delta).toFixed(6)}`;
+  const primary = await wfsFetch('lp_pa_cbnd_bonbun', bbox, { signal });
+  if (primary?.features?.length) return primary.features[0];
+  const secondary = await wfsFetch('lp_pa_cbnd_bubun', bbox, { signal });
+  return secondary?.features?.[0] || null;
+}
+
+async function loadCaptureLayers(lat, lng, job) {
+  assertCaptureActive(job);
+  const [background, target] = await Promise.all([
+    wfsFetch('lp_pa_cbnd_bonbun', captureMapBbox(), { signal: job.controller.signal }),
+    fetchTargetParcel(lat, lng, job.controller.signal),
+  ]);
+  assertCaptureActive(job);
+  if (!target) throw new Error('해당 위치의 지적 정보 없음');
+  drawCaptureParcelLayer(background?.features || [], target);
+}
+
+function drawCaptureParcelLayer(backgroundFeatures, targetFeature) {
+  const canvas = batchElements.captureOverlay;
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.round(rect.width));
+  const height = Math.max(1, Math.round(rect.height));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+
+  const ctx = canvas.getContext('2d');
+  const projection = state.captureMap.getProjection();
+  ctx.clearRect(0, 0, width, height);
+
+  const drawFeature = (feature, style) => {
+    geometryToKakaoPaths(feature.geometry).forEach(ring => {
+      if (!ring.length) return;
+      ctx.beginPath();
+      ring.forEach((point, index) => {
+        const pixel = projection.containerPointFromCoords(point);
+        if (index === 0) ctx.moveTo(pixel.x, pixel.y);
+        else ctx.lineTo(pixel.x, pixel.y);
+      });
+      ctx.closePath();
+      ctx.save();
+      ctx.fillStyle = style.fillColor;
+      ctx.globalAlpha = style.fillOpacity;
+      ctx.fill();
+      ctx.restore();
+      ctx.save();
+      ctx.strokeStyle = style.strokeColor;
+      ctx.globalAlpha = style.strokeOpacity;
+      ctx.lineWidth = style.strokeWidth;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+      ctx.restore();
+    });
+  };
+
+  backgroundFeatures.forEach(feature => drawFeature(feature, {
+    strokeColor: '#8888bb', strokeOpacity: 0.7, strokeWidth: 0.8,
+    fillColor: '#4444aa', fillOpacity: 0.04,
+  }));
+  drawFeature(targetFeature, {
+    strokeColor: '#ff6b35', strokeOpacity: 1, strokeWidth: 2,
+    fillColor: '#ff6b35', fillOpacity: 0.25,
+  });
+}
+
+async function captureMapImage(job) {
+  assertCaptureActive(job);
+  const canvas = await html2canvas(batchElements.captureHost, {
+    useCORS: false,
+    proxy: '/api/proxy',
+    scale: 1,
+    width: CAPTURE_CONFIG.width,
+    height: CAPTURE_CONFIG.height,
+    backgroundColor: '#e9edf2',
+    logging: false,
+  });
+  assertCaptureActive(job);
+  return canvas;
+}
+
+function canvasToBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('PNG 생성 실패')), 'image/png');
+  });
+}
+
+async function createCrop(sourceCanvas, config) {
+  const cropWidth = Math.max(1, Math.round(sourceCanvas.width * config.widthRatio));
+  const cropHeight = Math.max(1, Math.round(sourceCanvas.height * config.heightRatio));
+  const centerX = sourceCanvas.width * config.centerXRatio;
+  const centerY = sourceCanvas.height * config.centerYRatio;
+  const sourceX = Math.max(0, Math.min(sourceCanvas.width - cropWidth, Math.round(centerX - cropWidth / 2)));
+  const sourceY = Math.max(0, Math.min(sourceCanvas.height - cropHeight, Math.round(centerY - cropHeight / 2)));
+  const cropCanvas = document.createElement('canvas');
+  cropCanvas.width = cropWidth;
+  cropCanvas.height = cropHeight;
+  cropCanvas.getContext('2d').drawImage(
+    sourceCanvas,
+    sourceX, sourceY, cropWidth, cropHeight,
+    0, 0, cropWidth, cropHeight,
+  );
+  return canvasToBlob(cropCanvas);
+}
+
+async function processAddress(address, filename, job) {
+  const { lat, lng } = await geocodeAddress(address, job);
+  assertCaptureActive(job);
+  await moveCaptureMap(lat, lng, job);
+  await loadCaptureLayers(lat, lng, job);
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const canvas = await captureMapImage(job);
+  const [original, crop, crop2] = await Promise.all([
+    canvasToBlob(canvas),
+    createCrop(canvas, CAPTURE_CONFIG.crop),
+    createCrop(canvas, CAPTURE_CONFIG.crop2),
+  ]);
+  assertCaptureActive(job);
+  job.zip.file(`지도/${filename}.png`, original);
+  job.zip.file(`crop/${filename}_cropped_map.png`, crop);
+  job.zip.file(`crop2/${filename}_square_map.png`, crop2);
+}
+
+function resetBatchResults(total) {
+  state.captureZipBlob = null;
+  batchElements.progress.max = Math.max(1, total);
+  batchElements.progress.value = 0;
+  batchElements.progressText.textContent = `0 / ${total}`;
+  batchElements.progressPercent.textContent = '0%';
+  batchElements.success.textContent = '성공 0건';
+  batchElements.failure.textContent = '실패 0건';
+  batchElements.failures.classList.remove('open');
+  batchElements.failures.open = false;
+  batchElements.failureList.replaceChildren();
+  batchElements.download.disabled = true;
+  batchElements.clearMemory.disabled = true;
+}
+
+function updateBatchProgress(job, processed) {
+  batchElements.progress.value = processed;
+  batchElements.progressText.textContent = `${processed} / ${job.total}`;
+  batchElements.progressPercent.textContent = `${Math.round((processed / job.total) * 100)}%`;
+  batchElements.success.textContent = `성공 ${job.succeeded}건`;
+  batchElements.failure.textContent = `실패 ${job.failures.length}건`;
+}
+
+function renderBatchFailures(failures) {
+  batchElements.failureList.replaceChildren();
+  failures.forEach(({ address, reason }) => {
+    const item = document.createElement('li');
+    item.textContent = `${address}: ${reason}`;
+    batchElements.failureList.appendChild(item);
+  });
+  batchElements.failures.classList.toggle('open', failures.length > 0);
+  batchElements.failures.open = failures.length > 0;
+}
+
+async function startBatchCapture() {
+  if (state.captureJob) return;
+  const addresses = parseAddresses();
+  if (!addresses.length) return;
+  if (!state.captureMap) {
+    batchElements.current.textContent = '캡처 지도가 아직 준비되지 않았습니다.';
+    return;
+  }
+  if (!window.JSZip) {
+    batchElements.current.textContent = 'ZIP 라이브러리를 불러오지 못했습니다. 페이지를 새로고침해 주세요.';
+    return;
+  }
+
+  const filenames = allocateFilenames(addresses);
+  const job = {
+    cancelled: false,
+    controller: new AbortController(),
+    zip: new JSZip(),
+    total: addresses.length,
+    succeeded: 0,
+    failures: [],
+  };
+  state.captureJob = job;
+  resetBatchResults(job.total);
+  batchElements.addresses.disabled = true;
+  batchElements.start.disabled = true;
+  batchElements.stop.disabled = false;
+  batchElements.clearMemory.disabled = true;
+
+  let processed = 0;
+  for (let index = 0; index < addresses.length; index += 1) {
+    const address = addresses[index];
+    if (job.cancelled) break;
+    batchElements.current.textContent = `처리 중: ${index + 1} / ${job.total} · ${address}`;
+    try {
+      await processAddress(address, filenames[index], job);
+      job.succeeded += 1;
+    } catch (error) {
+      if (job.cancelled || error instanceof CaptureCancelledError || error.name === 'AbortError') break;
+      const reason = String(error.message || error).split('\n')[0];
+      job.failures.push({ address, reason });
+      renderBatchFailures(job.failures);
+    }
+    processed += 1;
+    updateBatchProgress(job, processed);
+    if (index < addresses.length - 1 && !job.cancelled) {
+      await delayWithCancellation(CAPTURE_CONFIG.addressThrottleMs, job).catch(() => {});
+    }
+  }
+
+  let zipError = null;
+  if (job.succeeded > 0) {
+    batchElements.current.textContent = job.cancelled ? '중지됨 · 현재까지 ZIP 생성 중...' : '캡처 완료 · ZIP 생성 중...';
+    try {
+      state.captureZipBlob = await job.zip.generateAsync({ type: 'blob', compression: 'STORE' });
+      batchElements.download.disabled = false;
+      batchElements.clearMemory.disabled = false;
+    } catch (error) {
+      zipError = String(error.message || error).split('\n')[0];
+    }
+  }
+
+  batchElements.current.textContent = zipError
+    ? `ZIP 생성 실패: ${zipError}`
+    : job.cancelled
+      ? `중지됨 · 성공 ${job.succeeded}건 / 실패 ${job.failures.length}건`
+      : `완료 · 성공 ${job.succeeded}건 / 실패 ${job.failures.length}건`;
+  state.captureJob = null;
+  batchElements.addresses.disabled = false;
+  batchElements.stop.disabled = true;
+  updateBatchAddressCount();
+}
+
+function cancelBatchCapture() {
+  const job = state.captureJob;
+  if (!job) return;
+  job.cancelled = true;
+  job.controller.abort();
+  batchElements.stop.disabled = true;
+  batchElements.current.textContent = '현재 작업을 안전하게 중지하는 중...';
+}
+
+function delayWithCancellation(milliseconds, job) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      clearInterval(poll);
+      resolve();
+    }, milliseconds);
+    const poll = setInterval(() => {
+      if (!job.cancelled) return;
+      clearTimeout(timer);
+      clearInterval(poll);
+      reject(new CaptureCancelledError());
+    }, Math.min(100, milliseconds));
+  });
+}
+
+function downloadZip() {
+  if (!state.captureZipBlob) return;
+  const now = new Date();
+  const date = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
+  const url = URL.createObjectURL(state.captureZipBlob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `land_capture_${date}.zip`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+function clearBatchCaptureMemory() {
+  if (state.captureJob) return;
+  state.captureZipBlob = null;
+
+  const canvas = batchElements.captureOverlay;
+  canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+  canvas.width = 1;
+  canvas.height = 1;
+
+  resetBatchResults(0);
+  batchElements.current.textContent = '캡처 결과 메모리를 지웠습니다.';
+  updateBatchAddressCount();
 }
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
