@@ -99,6 +99,20 @@
     border: 1px solid #2a3a5a; pointer-events: none;
   }
 
+  /* VWorld zoning overlay */
+  #zone-legend {
+    position: absolute; right: 14px; bottom: 42px; z-index: 10;
+    width: min(300px, calc(100% - 28px)); padding: 10px 12px;
+    border: 1px solid #665b28; border-radius: 8px;
+    background: rgba(26,26,46,0.92); color: #d8dee9;
+    font-size: 11px; line-height: 1.45; backdrop-filter: blur(8px);
+  }
+  #zone-legend[hidden] { display: none; }
+  .zone-legend-title { display: flex; align-items: center; gap: 7px; color: #f4e7a1; font-weight: 700; }
+  .zone-swatch { width: 18px; height: 11px; border: 2px solid #ef4444; background: rgba(250,204,21,.32); }
+  #zone-summary { margin-top: 4px; color: #c4cad5; overflow-wrap: anywhere; }
+  .zone-disclaimer { margin-top: 4px; color: #777f8f; font-size: 10px; }
+
   /* Toast */
   #toast {
     position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%);
@@ -253,7 +267,8 @@
     <div id="search-results"></div>
 
     <div id="map-controls">
-      <button class="map-ctrl-btn" id="btn-satellite" title="항공사진">🛰</button>
+      <button class="map-ctrl-btn active" id="btn-satellite" title="항공사진">🛰</button>
+      <button class="map-ctrl-btn active" id="btn-zoning" title="VWorld 용도지역" aria-pressed="true">용</button>
       <button class="map-ctrl-btn" id="btn-zoom-in" title="확대">+</button>
       <button class="map-ctrl-btn" id="btn-zoom-out" title="축소">−</button>
     </div>
@@ -261,6 +276,11 @@
     <div id="zoom-hint">더 확대하면 지적도가 표시됩니다 (레벨: <span id="zoom-level"></span>)</div>
     <div id="map-loading">지적도 로딩 중...</div>
     <div id="toast"></div>
+    <div id="zone-legend">
+      <div class="zone-legend-title"><span class="zone-swatch"></span>VWorld 용도지역</div>
+      <div id="zone-summary">현재 화면의 용도지역을 불러오는 중입니다…</div>
+      <div class="zone-disclaimer">LT_C_UQ111 · 참고용이며 법적 효력이 없습니다.</div>
+    </div>
   </div>
 
   <div id="sidebar">
@@ -325,7 +345,7 @@
         <ul id="batch-failure-list"></ul>
       </details>
     </div>
-    <p class="batch-note">1600×1000 HYBRID 위성지도와 지적도·대상 필지 오버레이를 별도 지도에서 순차 생성합니다. 메인 지도 위치와 선택 상태는 바뀌지 않습니다.</p>
+    <p class="batch-note">1600×1000 Kakao HYBRID 위성지도와 VWorld 용도지역·지적도·대상 필지 오버레이를 별도 지도에서 순차 생성합니다. 메인 지도 위치와 선택 상태는 바뀌지 않습니다.</p>
   </div>
 </aside>
 
@@ -334,15 +354,24 @@
   <canvas id="batch-capture-overlay"></canvas>
 </div>
 
+<script src="/map-selection.js"></script>
 <script>
 // ─── State ────────────────────────────────────────────────────────────────────
 const state = {
   map: null,
-  isSatellite: false,
+  isSatellite: true,
+  zoningEnabled: true,
   parcels: [],          // { id, pnu, label, paths, style, polygons[], checked, geoCoords[] }
   wfsPolygons: [],      // background viewport polygons
+  zonePolygons: [],
+  zoneFeatures: [],
   loadingWfs: false,
+  loadingZones: false,
   lastWfsBounds: null,
+  lastZoneBounds: null,
+  zoneRequest: null,
+  focusLocation: null,
+  loadingCount: 0,
   dirHandle: null,      // File System Access API directory handle
   captureMap: null,
   captureJob: null,
@@ -386,6 +415,7 @@ function geoRingToKakao(ring) {
 
 // GeoJSON Feature geometry → array of LatLng arrays (handles Polygon + MultiPolygon)
 function geometryToKakaoPaths(geometry) {
+  if (!geometry) return [];
   if (geometry.type === 'Polygon') {
     return [geoRingToKakao(geometry.coordinates[0])];
   }
@@ -393,6 +423,30 @@ function geometryToKakaoPaths(geometry) {
     return geometry.coordinates.map(poly => geoRingToKakao(poly[0]));
   }
   return [];
+}
+
+// Kakao Polygon 하나에 외곽선과 내부 hole을 함께 전달한다.
+function geometryToKakaoPolygons(geometry) {
+  if (!geometry) return [];
+  if (geometry.type === 'Polygon') {
+    return [geometry.coordinates.map(geoRingToKakao)];
+  }
+  if (geometry.type === 'MultiPolygon') {
+    return geometry.coordinates.map(polygon => polygon.map(geoRingToKakao));
+  }
+  return [];
+}
+
+function beginMapLoading(message = '공간정보 로딩 중...') {
+  state.loadingCount += 1;
+  const element = document.getElementById('map-loading');
+  element.textContent = message;
+  element.style.display = 'block';
+}
+
+function endMapLoading() {
+  state.loadingCount = Math.max(0, state.loadingCount - 1);
+  if (state.loadingCount === 0) document.getElementById('map-loading').style.display = 'none';
 }
 
 // Bounding box of LatLng array
@@ -463,6 +517,7 @@ function initMap() {
     center: new kakao.maps.LatLng(37.5665, 126.9780),
     level: 3,
   });
+  state.map.setMapTypeId(kakao.maps.MapTypeId.HYBRID);
 
   resizeParcelLayer();
   window.addEventListener('resize', () => {
@@ -486,13 +541,23 @@ function initMap() {
 
   // Reload WFS on move/zoom
   kakao.maps.event.addListener(state.map, 'idle', () => {
-    if (state.map.getLevel() <= 4) loadWfsLayer();
-    else clearWfsLayer();
+    if (state.map.getLevel() <= 4) {
+      loadWfsLayer();
+      if (state.zoningEnabled) loadZoneLayer();
+    } else {
+      clearWfsLayer();
+      state.zoneRequest?.abort();
+      clearZoneLayer();
+      setZoneSummary('지도를 더 확대하면 용도지역이 표시됩니다.');
+    }
     scheduleParcelLayerRedraw();
   });
   kakao.maps.event.addListener(state.map, 'bounds_changed', scheduleParcelLayerRedraw);
 
-  if (state.map.getLevel() <= 4) loadWfsLayer();
+  if (state.map.getLevel() <= 4) {
+    loadWfsLayer();
+    loadZoneLayer();
+  }
 
   // Satellite toggle
   document.getElementById('btn-satellite').onclick = () => {
@@ -501,6 +566,19 @@ function initMap() {
       state.isSatellite ? kakao.maps.MapTypeId.HYBRID : kakao.maps.MapTypeId.ROADMAP
     );
     document.getElementById('btn-satellite').classList.toggle('active', state.isSatellite);
+  };
+
+  document.getElementById('btn-zoning').onclick = () => {
+    state.zoningEnabled = !state.zoningEnabled;
+    const button = document.getElementById('btn-zoning');
+    button.classList.toggle('active', state.zoningEnabled);
+    button.setAttribute('aria-pressed', String(state.zoningEnabled));
+    document.getElementById('zone-legend').hidden = !state.zoningEnabled;
+    if (state.zoningEnabled && state.map.getLevel() <= 4) loadZoneLayer(true);
+    else {
+      state.zoneRequest?.abort();
+      clearZoneLayer();
+    }
   };
 
   // Zoom controls
@@ -598,14 +676,15 @@ async function loadWfsLayer() {
 
   state.loadingWfs = true;
   state.lastWfsBounds = { sw, ne };
-  document.getElementById('map-loading').style.display = 'block';
+  beginMapLoading('VWorld 지적도 로딩 중...');
 
   // EPSG:4326 axis order is (lat, lon)
   const bbox = `${sw.getLat().toFixed(6)},${sw.getLng().toFixed(6)},${ne.getLat().toFixed(6)},${ne.getLng().toFixed(6)}`;
 
   try {
     const data = await wfsFetch('lp_pa_cbnd_bonbun', bbox);
-    clearWfsLayer();
+    state.wfsPolygons.forEach(p => p.setMap(null));
+    state.wfsPolygons = [];
     (data?.features || []).forEach(feature => {
       geometryToKakaoPaths(feature.geometry).forEach(path => {
         const poly = new kakao.maps.Polygon({
@@ -629,7 +708,7 @@ async function loadWfsLayer() {
     // silent
   } finally {
     state.loadingWfs = false;
-    document.getElementById('map-loading').style.display = 'none';
+    endMapLoading();
   }
 }
 
@@ -637,6 +716,101 @@ function clearWfsLayer() {
   state.wfsPolygons.forEach(p => p.setMap(null));
   state.wfsPolygons = [];
   state.lastWfsBounds = null;
+}
+
+// ─── VWorld Zoning Layer (LT_C_UQ111) ────────────────────────────────────────
+async function loadZoneLayer(force = false) {
+  if (!state.zoningEnabled || state.map.getLevel() > 4) return;
+
+  const bounds = state.map.getBounds();
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+  if (!force && isNearbyBounds(state.lastZoneBounds, sw, ne)) return;
+
+  state.zoneRequest?.abort();
+  const controller = new AbortController();
+  state.zoneRequest = controller;
+  state.loadingZones = true;
+  beginMapLoading('VWorld 용도지역 로딩 중...');
+  const bbox = mapBoundsToBbox(sw, ne);
+
+  try {
+    const data = await wfsFetch('lt_c_uq111', bbox, { signal: controller.signal });
+    if (controller.signal.aborted) return;
+
+    clearZoneLayer(false);
+    state.lastZoneBounds = { sw, ne };
+    state.zoneFeatures = data?.features || [];
+    state.zoneFeatures.forEach(feature => {
+      geometryToKakaoPolygons(feature.geometry).forEach(path => {
+        const polygon = new kakao.maps.Polygon({
+          map: state.map,
+          path,
+          strokeWeight: 2,
+          strokeColor: '#ef4444',
+          strokeOpacity: 0.9,
+          fillColor: '#facc15',
+          fillOpacity: 0.28,
+          zIndex: 2,
+        });
+        kakao.maps.event.addListener(polygon, 'click', event => {
+          onMapClick(event.latLng.getLat(), event.latLng.getLng());
+        });
+        state.zonePolygons.push(polygon);
+      });
+    });
+    updateZoneSummary();
+  } catch (error) {
+    if (error.name !== 'AbortError') {
+      console.error('[VWorld zoning]', error);
+      setZoneSummary(`용도지역 조회 실패: ${error.message}`);
+    }
+  } finally {
+    if (state.zoneRequest === controller) {
+      state.zoneRequest = null;
+      state.loadingZones = false;
+    }
+    endMapLoading();
+  }
+}
+
+function clearZoneLayer(resetBounds = true) {
+  state.zonePolygons.forEach(polygon => polygon.setMap(null));
+  state.zonePolygons = [];
+  state.zoneFeatures = [];
+  if (resetBounds) state.lastZoneBounds = null;
+}
+
+function mapBoundsToBbox(sw, ne) {
+  // VWorld EPSG:4326 WFS는 axis order를 위도,경도 순서로 받는다.
+  return `${sw.getLat().toFixed(6)},${sw.getLng().toFixed(6)},${ne.getLat().toFixed(6)},${ne.getLng().toFixed(6)}`;
+}
+
+function isNearbyBounds(previous, sw, ne) {
+  if (!previous) return false;
+  const dx = Math.abs(ne.getLng() - previous.ne.getLng());
+  const dy = Math.abs(ne.getLat() - previous.ne.getLat());
+  const threshold = (ne.getLat() - sw.getLat()) * 0.3;
+  return dx < threshold && dy < threshold;
+}
+
+function setZoneSummary(message) {
+  document.getElementById('zone-summary').textContent = message;
+}
+
+function updateZoneSummary() {
+  const count = state.zoneFeatures.length;
+  if (!state.focusLocation) {
+    setZoneSummary(`현재 화면 ${count}개 도형`);
+    return;
+  }
+  const { lat, lng, pnu } = state.focusLocation;
+  const names = [...new Set(state.zoneFeatures
+    .filter(feature => LandMapSelection.pointInGeometry([lng, lat], feature.geometry))
+    .map(feature => feature.properties?.uname || feature.properties?.UNAME)
+    .filter(Boolean))];
+  const prefix = pnu ? `PNU ${pnu} · ` : '';
+  setZoneSummary(`${prefix}${names.length ? names.join(', ') : '해당 지점의 용도지역명 없음'} · ${count}개 도형`);
 }
 
 // ─── API Helpers ──────────────────────────────────────────────────────────────
@@ -650,33 +824,41 @@ async function wfsFetch(typename, bbox, fetchOptions = {}) {
 }
 
 // ─── Map Click: select parcel ─────────────────────────────────────────────────
-async function onMapClick(lat, lng) {
+async function onMapClick(lat, lng, expectedPnu = '') {
   const delta = 0.0002;
   // EPSG:4326 axis order is (lat, lon)
   const bbox = `${(lat - delta).toFixed(6)},${(lng - delta).toFixed(6)},${(lat + delta).toFixed(6)},${(lng + delta).toFixed(6)}`;
 
-  document.getElementById('map-loading').style.display = 'block';
+  beginMapLoading('선택 필지 조회 중...');
   try {
-    let feature = null;
-
-    const data = await wfsFetch('lp_pa_cbnd_bonbun', bbox);
-    if (data?.features?.length > 0) {
-      feature = data.features[0];
-    } else {
-      const data2 = await wfsFetch('lp_pa_cbnd_bubun', bbox);
-      if (data2?.features?.length > 0) feature = data2.features[0];
+    const detailed = await wfsFetch('lp_pa_cbnd_bubun', bbox);
+    let feature = LandMapSelection.selectParcelFeature(detailed?.features, {
+      lat,
+      lng,
+      pnu: expectedPnu,
+    });
+    if (!feature) {
+      const fallback = await wfsFetch('lp_pa_cbnd_bonbun', bbox);
+      feature = LandMapSelection.selectParcelFeature(fallback?.features, { lat, lng });
     }
 
     if (!feature) {
       showToast('해당 위치의 지적 정보를 불러올 수 없습니다', 4000);
       return;
     }
+    const props = feature.properties || {};
+    state.focusLocation = {
+      lat,
+      lng,
+      pnu: props.PNU || props.pnu || props.A1 || '',
+    };
+    updateZoneSummary();
     addParcelFeature(feature);
   } catch (err) {
     console.error('[WFS]', err);
     showToast('지적 조회 실패: ' + err.message, 4000);
   } finally {
-    document.getElementById('map-loading').style.display = 'none';
+    endMapLoading();
   }
 }
 
@@ -941,11 +1123,12 @@ async function writeFileToDir(handle, filename, blob) {
   await writable.close();
 }
 
-// ─── Address Search (Kakao Geocoder) ─────────────────────────────────────────
+// ─── Address Search (VWorld first, Kakao fallback) ───────────────────────────
 const searchInput = document.getElementById('search-input');
 const searchResults = document.getElementById('search-results');
+const searchButton = document.getElementById('search-btn');
 
-document.getElementById('search-btn').onclick = doSearch;
+searchButton.onclick = doSearch;
 searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
 document.addEventListener('click', e => {
   if (!e.target.closest('#search-container') && !e.target.closest('#search-results')) {
@@ -953,39 +1136,96 @@ document.addEventListener('click', e => {
   }
 });
 
-function doSearch() {
+async function doSearch() {
   const query = searchInput.value.trim();
   if (!query) return;
+  searchButton.disabled = true;
+  searchButton.textContent = '검색 중';
 
-  const geocoder = new kakao.maps.services.Geocoder();
-  geocoder.addressSearch(query, (result, status) => {
-    if (status === kakao.maps.services.Status.OK && result.length > 0) {
-      renderSearchResults(result);
-    } else {
-      // fallback: keyword search
-      const ps = new kakao.maps.services.Places();
-      ps.keywordSearch(query, (result2, status2) => {
-        if (status2 === kakao.maps.services.Status.OK && result2.length > 0) {
-          renderSearchResults(result2.map(r => ({
-            address_name: r.address_name || r.road_address_name || r.place_name,
-            x: r.x, y: r.y,
-          })));
-        } else {
-          showToast('검색 결과가 없습니다');
-          searchResults.style.display = 'none';
-        }
-      });
+  try {
+    let items = [];
+    try {
+      const response = await fetch(`/api/search?query=${encodeURIComponent(query)}`);
+      const data = await response.json();
+      if (response.ok) items = (data?.response?.result?.items || []).map(normalizeVworldSearchItem);
+    } catch (error) {
+      console.warn('[VWorld search fallback]', error);
     }
+    if (!items.length) items = await searchKakao(query);
+
+    if (items.length) renderSearchResults(items);
+    else {
+      showToast('검색 결과가 없습니다');
+      searchResults.style.display = 'none';
+    }
+  } finally {
+    searchButton.disabled = false;
+    searchButton.textContent = '검색';
+  }
+}
+
+function normalizeVworldSearchItem(item) {
+  const title = stripHtml(item.title || '');
+  const parcelAddress = item.address?.parcel || '';
+  const roadAddress = item.address?.road || '';
+  return {
+    address_name: title || parcelAddress || roadAddress,
+    sub_address: parcelAddress || roadAddress,
+    x: item.point?.x,
+    y: item.point?.y,
+    pnu: item.id || '',
+  };
+}
+
+function searchKakao(query) {
+  return new Promise(resolve => {
+    const geocoder = new kakao.maps.services.Geocoder();
+    geocoder.addressSearch(query, (results, status) => {
+      if (status === kakao.maps.services.Status.OK && results.length) {
+        resolve(results.map(item => ({
+          address_name: item.address_name,
+          sub_address: item.road_address?.address_name || '',
+          x: item.x,
+          y: item.y,
+          pnu: '',
+        })));
+        return;
+      }
+      const places = new kakao.maps.services.Places();
+      places.keywordSearch(query, (placeResults, placeStatus) => {
+        if (placeStatus !== kakao.maps.services.Status.OK) return resolve([]);
+        resolve(placeResults.map(item => ({
+          address_name: item.address_name || item.road_address_name || item.place_name,
+          sub_address: item.place_name || '',
+          x: item.x,
+          y: item.y,
+          pnu: '',
+        })));
+      });
+    });
   });
+}
+
+function stripHtml(value) {
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = String(value).replace(/<[^>]*>/g, '');
+  return textarea.value;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;',
+  })[character]);
 }
 
 function renderSearchResults(items) {
   searchResults.innerHTML = items.slice(0, 8).map((item, i) => {
-    const name = item.place_name || item.address_name || item.road_address?.address_name || '';
-    const sub = item.road_address?.address_name || item.address?.address_name || '';
+    const name = item.address_name || '';
+    const sub = item.sub_address || '';
     return `<div class="search-result-item" data-idx="${i}">
-      <div>${name}</div>
-      ${sub && sub !== name ? `<div class="addr">${sub}</div>` : ''}
+      <div>${escapeHtml(name)}</div>
+      ${sub && sub !== name ? `<div class="addr">${escapeHtml(sub)}</div>` : ''}
+      ${item.pnu ? `<div class="addr">PNU ${escapeHtml(item.pnu)}</div>` : ''}
     </div>`;
   }).join('');
   searchResults.style.display = 'block';
@@ -996,10 +1236,15 @@ function renderSearchResults(items) {
       const lat = parseFloat(item.y);
       const lng = parseFloat(item.x);
       if (!isNaN(lat) && !isNaN(lng)) {
+        state.focusLocation = { lat, lng, pnu: item.pnu || '' };
         state.map.setCenter(new kakao.maps.LatLng(lat, lng));
         state.map.setLevel(3);
         searchResults.style.display = 'none';
-        setTimeout(() => onMapClick(lat, lng), 600);
+        setZoneSummary(item.pnu ? `PNU ${item.pnu} · 용도지역 확인 중…` : '용도지역 확인 중…');
+        setTimeout(() => {
+          loadZoneLayer(true);
+          onMapClick(lat, lng, item.pnu || '');
+        }, 600);
       }
     });
   });
@@ -1213,24 +1458,36 @@ function captureMapBbox() {
 async function fetchTargetParcel(lat, lng, signal) {
   const delta = 0.0002;
   const bbox = `${(lat - delta).toFixed(6)},${(lng - delta).toFixed(6)},${(lat + delta).toFixed(6)},${(lng + delta).toFixed(6)}`;
-  const primary = await wfsFetch('lp_pa_cbnd_bonbun', bbox, { signal });
-  if (primary?.features?.length) return primary.features[0];
-  const secondary = await wfsFetch('lp_pa_cbnd_bubun', bbox, { signal });
-  return secondary?.features?.[0] || null;
+  const detailed = await wfsFetch('lp_pa_cbnd_bubun', bbox, { signal });
+  const detailedMatch = LandMapSelection.selectParcelFeature(detailed?.features, { lat, lng });
+  if (detailedMatch) return detailedMatch;
+  const fallback = await wfsFetch('lp_pa_cbnd_bonbun', bbox, { signal });
+  return LandMapSelection.selectParcelFeature(fallback?.features, { lat, lng });
 }
 
 async function loadCaptureLayers(lat, lng, job) {
   assertCaptureActive(job);
-  const [background, target] = await Promise.all([
+  const [background, target, zones] = await Promise.all([
     wfsFetch('lp_pa_cbnd_bonbun', captureMapBbox(), { signal: job.controller.signal }),
     fetchTargetParcel(lat, lng, job.controller.signal),
+    fetchCaptureZones(captureMapBbox(), job.controller.signal),
   ]);
   assertCaptureActive(job);
   if (!target) throw new Error('해당 위치의 지적 정보 없음');
-  drawCaptureParcelLayer(background?.features || [], target);
+  drawCaptureParcelLayer(background?.features || [], target, zones?.features || []);
 }
 
-function drawCaptureParcelLayer(backgroundFeatures, targetFeature) {
+async function fetchCaptureZones(bbox, signal) {
+  try {
+    return await wfsFetch('lt_c_uq111', bbox, { signal });
+  } catch (error) {
+    if (error.name === 'AbortError') throw error;
+    console.warn('[Batch VWorld zoning]', error);
+    return { features: [] };
+  }
+}
+
+function drawCaptureParcelLayer(backgroundFeatures, targetFeature, zoneFeatures = []) {
   const canvas = batchElements.captureOverlay;
   const rect = canvas.getBoundingClientRect();
   const width = Math.max(1, Math.round(rect.width));
@@ -1245,19 +1502,21 @@ function drawCaptureParcelLayer(backgroundFeatures, targetFeature) {
   ctx.clearRect(0, 0, width, height);
 
   const drawFeature = (feature, style) => {
-    geometryToKakaoPaths(feature.geometry).forEach(ring => {
-      if (!ring.length) return;
+    geometryToKakaoPolygons(feature.geometry).forEach(polygon => {
       ctx.beginPath();
-      ring.forEach((point, index) => {
-        const pixel = projection.containerPointFromCoords(point);
-        if (index === 0) ctx.moveTo(pixel.x, pixel.y);
-        else ctx.lineTo(pixel.x, pixel.y);
+      polygon.forEach(ring => {
+        if (!ring.length) return;
+        ring.forEach((point, index) => {
+          const pixel = projection.containerPointFromCoords(point);
+          if (index === 0) ctx.moveTo(pixel.x, pixel.y);
+          else ctx.lineTo(pixel.x, pixel.y);
+        });
+        ctx.closePath();
       });
-      ctx.closePath();
       ctx.save();
       ctx.fillStyle = style.fillColor;
       ctx.globalAlpha = style.fillOpacity;
-      ctx.fill();
+      ctx.fill('evenodd');
       ctx.restore();
       ctx.save();
       ctx.strokeStyle = style.strokeColor;
@@ -1269,6 +1528,10 @@ function drawCaptureParcelLayer(backgroundFeatures, targetFeature) {
     });
   };
 
+  zoneFeatures.forEach(feature => drawFeature(feature, {
+    strokeColor: '#ef4444', strokeOpacity: 0.9, strokeWidth: 2,
+    fillColor: '#facc15', fillOpacity: 0.28,
+  }));
   backgroundFeatures.forEach(feature => drawFeature(feature, {
     strokeColor: '#8888bb', strokeOpacity: 0.7, strokeWidth: 0.8,
     fillColor: '#4444aa', fillOpacity: 0.04,

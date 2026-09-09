@@ -1,3 +1,4 @@
+import math
 import os
 import time
 from typing import Any, Dict, List
@@ -21,6 +22,11 @@ VWORLD_HEADERS = {
     "Accept": "application/xml,text/xml,*/*",
     "Connection": "close",
 }
+WFS_DATASETS = {
+    "lp_pa_cbnd_bonbun": 200,
+    "lp_pa_cbnd_bubun": 200,
+    "lt_c_uq111": 100,
+}
 
 
 def create_app() -> Flask:
@@ -37,32 +43,44 @@ def create_app() -> Flask:
     def config_api() -> Any:
         return jsonify({
             "kakaoAppKey": os.getenv("KAKAO_APP_KEY", ""),
-            "vworldApiKey": os.getenv("VWORLD_API_KEY", ""),
         })
 
     @app.get("/api/wfs")
     def wfs_api() -> Any:
-        typename = request.args.get("typename", "").strip()
+        typename = request.args.get("typename", "").strip().lower()
         bbox = request.args.get("bbox", "").strip()
         if not typename or not bbox:
             return jsonify({"error": "typename and bbox are required"}), 400
+        if typename not in WFS_DATASETS:
+            return jsonify({"error": "Unsupported WFS dataset"}), 400
+        bbox_error = _validate_bbox(bbox)
+        if bbox_error:
+            return jsonify({"error": bbox_error}), 400
         api_key = os.getenv("VWORLD_API_KEY", "").strip()
         domain = os.getenv("VWORLD_DOMAIN", "").strip()
         if not api_key:
             return jsonify({"error": "VWORLD_API_KEY is not configured"}), 500
-        url = (
-            f"https://api.vworld.kr/req/wfs?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature"
-            f"&TYPENAME={typename}&SRSNAME=EPSG:4326&OUTPUT=application/json"
-            f"&BBOX={bbox},EPSG:4326&COUNT=50"
-            f"&KEY={api_key}&DOMAIN={domain}"
-        )
+        params = {
+            "SERVICE": "WFS",
+            "VERSION": "2.0.0",
+            "REQUEST": "GetFeature",
+            "TYPENAME": typename,
+            "SRSNAME": "EPSG:4326",
+            "OUTPUT": "application/json",
+            "BBOX": f"{bbox},EPSG:4326",
+            "COUNT": str(WFS_DATASETS[typename]),
+            "KEY": api_key,
+            "DOMAIN": domain,
+        }
         try:
-            resp = requests.get(url, timeout=(5, 20))
+            resp = requests.get("https://api.vworld.kr/req/wfs", params=params, timeout=(5, 20))
             text = resp.text
             if text.strip().startswith("<"):
                 return jsonify({"error": f"Vworld WFS error: {text[:200]}"}), 502
             from flask import Response
-            return Response(text, status=resp.status_code, mimetype="application/json")
+            response = Response(text, status=resp.status_code, mimetype="application/json")
+            response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=600"
+            return response
         except Exception as exc:
             return jsonify({"error": str(exc)}), 502
 
@@ -189,6 +207,23 @@ def _safe_int(raw: str, default: int, min_v: int, max_v: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(min_v, min(value, max_v))
+
+
+def _validate_bbox(raw: str) -> str:
+    try:
+        values = [float(value) for value in raw.split(",")]
+    except ValueError:
+        return "bbox must contain four numeric values"
+    if len(values) != 4:
+        return "bbox must contain four numeric values"
+    if not all(math.isfinite(value) for value in values):
+        return "bbox must contain four numeric values"
+    south, west, north, east = values
+    if south < -90 or north > 90 or west < -180 or east > 180 or south >= north or west >= east:
+        return "bbox coordinates are invalid"
+    if north - south > 0.2 or east - west > 0.2:
+        return "bbox is too large"
+    return ""
 
 
 def _validate_inputs(stdr_year: str, legal_code: str, main_no: str, sub_no: str) -> Any:

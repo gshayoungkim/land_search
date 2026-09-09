@@ -5,7 +5,11 @@
 - Frontend: React + Vite
 - Backend: Flask
 - Deployment: Vercel 단일 배포 (정적 + Python Serverless)
-- External API: VWORLD `getLandCharacteristics`
+- External API: VWORLD `getLandCharacteristics`, 주소 검색, WFS
+
+지도 화면(`/map.html`)은 Kakao HYBRID 위성지도를 베이스맵으로 사용하고 VWorld
+연속지적도와 용도지역(`LT_C_UQ111`)을 오버레이합니다. 주소 검색 결과의 PNU를
+기준으로 해당 지점의 용도지역명을 표시하며, 일괄 캡처에도 같은 레이어가 포함됩니다.
 
 ## 프로젝트 구조
 
@@ -42,6 +46,7 @@ python run.py
 ```env
 VWORLD_API_KEY=your_vworld_api_key
 VWORLD_DOMAIN=
+KAKAO_APP_KEY=your_kakao_javascript_key
 PORT=5000
 FLASK_HOST=127.0.0.1
 ```
@@ -67,6 +72,7 @@ VITE_API_BASE_URL=http://127.0.0.1:5000
 2. Environment Variables 설정
 - `VWORLD_API_KEY`
 - `VWORLD_DOMAIN` (선택, 등록 도메인 제한이 있을 때)
+- `KAKAO_APP_KEY` (Kakao Maps JavaScript 키)
 3. Deploy
 
 배포 후 동작:

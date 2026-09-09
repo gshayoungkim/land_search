@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>토지이음 공간정보 레이어 PoC</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { display: grid; grid-template-rows: auto 1fr; background: #111827; color: #e5e7eb; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px; }
+    .toolbar input { flex: 1; min-width: 260px; padding: 10px 12px; border: 1px solid #4b5563; border-radius: 7px; background: #1f2937; color: #fff; }
+    .toolbar button { padding: 10px 16px; border: 0; border-radius: 7px; background: #2563eb; color: #fff; cursor: pointer; }
+    .toolbar button:disabled { opacity: .55; cursor: wait; }
+    #status { width: 100%; min-height: 20px; color: #cbd5e1; font-size: 13px; }
+    #map { min-height: 420px; }
+    .legend { position: fixed; right: 14px; bottom: 14px; z-index: 3; padding: 10px 12px; border-radius: 8px; background: rgba(17, 24, 39, .88); font-size: 12px; }
+    .swatch { display: inline-block; width: 16px; height: 10px; margin-right: 6px; border: 2px solid #ef4444; background: rgba(250, 204, 21, .3); }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <input id="address" value="서울특별시 중구 태평로1가 31" aria-label="지번 주소" />
+    <button id="search">공식 공간정보 조회</button>
+    <div id="status">주소 1건으로 VWorld 용도지역을 조회하는 독립 기술검증 페이지입니다.</div>
+  </div>
+  <div id="map"></div>
+  <div class="legend"><span class="swatch"></span>VWorld 용도지역 (LT_C_UQ111)</div>
+
+  <script>
+    let map;
+    let overlays = [];
+
+    function setStatus(message, error = false) {
+      const el = document.getElementById('status');
+      el.textContent = message;
+      el.style.color = error ? '#fca5a5' : '#cbd5e1';
+    }
+
+    async function boot() {
+      try {
+        const response = await fetch('/api/config');
+        const config = await response.json();
+        if (!config.kakaoAppKey) throw new Error('KAKAO_APP_KEY가 설정되지 않았습니다.');
+        await loadKakaoSdk(config.kakaoAppKey);
+        map = new kakao.maps.Map(document.getElementById('map'), {
+          center: new kakao.maps.LatLng(37.56657, 126.97823),
+          level: 4,
+        });
+        map.setMapTypeId(kakao.maps.MapTypeId.HYBRID);
+        document.getElementById('search').addEventListener('click', runPoc);
+        document.getElementById('address').addEventListener('keydown', event => {
+          if (event.key === 'Enter') runPoc();
+        });
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    }
+
+    function loadKakaoSdk(appKey) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${appKey}&autoload=false`;
+        script.onload = () => kakao.maps.load(resolve);
+        script.onerror = () => reject(new Error('Kakao Maps SDK를 불러오지 못했습니다.'));
+        document.head.appendChild(script);
+      });
+    }
+
+    async function runPoc() {
+      const button = document.getElementById('search');
+      const query = document.getElementById('address').value.trim();
+      if (!query) return setStatus('주소를 입력해 주세요.', true);
+
+      button.disabled = true;
+      setStatus('주소와 용도지역을 조회하고 있습니다…');
+      clearOverlays();
+
+      try {
+        const searchResponse = await fetch(`/api/search?query=${encodeURIComponent(query)}`);
+        const searchData = await searchResponse.json();
+        const item = searchData?.response?.result?.items?.[0];
+        if (!searchResponse.ok || !item) throw new Error('주소 검색 결과가 없습니다.');
+
+        const lng = Number(item.point.x);
+        const lat = Number(item.point.y);
+        const center = new kakao.maps.LatLng(lat, lng);
+        map.setCenter(center);
+        map.setLevel(3);
+
+        const delta = 0.006;
+        const bbox = `${lat - delta},${lng - delta},${lat + delta},${lng + delta}`;
+        const zoneResponse = await fetch(`/api/wfs?typename=lt_c_uq111&bbox=${encodeURIComponent(bbox)}`);
+        const zones = await zoneResponse.json();
+        if (!zoneResponse.ok) throw new Error(zones.error || '용도지역 WFS 조회에 실패했습니다.');
+
+        const containingZones = [];
+        for (const feature of zones.features || []) {
+          drawGeometry(feature.geometry);
+          if (pointInGeometry([lng, lat], feature.geometry)) containingZones.push(feature.properties?.uname);
+        }
+
+        const marker = new kakao.maps.Marker({ map, position: center });
+        overlays.push(marker);
+        const names = [...new Set(containingZones.filter(Boolean))];
+        setStatus(`PNU ${item.id} · ${names.length ? names.join(', ') : '주변 용도지역 표시 완료'} · ${zones.features?.length || 0}개 도형`);
+      } catch (error) {
+        setStatus(error.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function drawGeometry(geometry) {
+      const polygons = geometry?.type === 'Polygon'
+        ? [geometry.coordinates]
+        : geometry?.type === 'MultiPolygon' ? geometry.coordinates : [];
+
+      for (const polygon of polygons) {
+        const paths = polygon.map(ring => ring.map(([lng, lat]) => new kakao.maps.LatLng(lat, lng)));
+        const overlay = new kakao.maps.Polygon({
+          map,
+          path: paths,
+          strokeWeight: 2,
+          strokeColor: '#ef4444',
+          strokeOpacity: .9,
+          fillColor: '#facc15',
+          fillOpacity: .28,
+        });
+        overlays.push(overlay);
+      }
+    }
+
+    function pointInGeometry(point, geometry) {
+      const polygons = geometry?.type === 'Polygon'
+        ? [geometry.coordinates]
+        : geometry?.type === 'MultiPolygon' ? geometry.coordinates : [];
+      return polygons.some(polygon => polygon[0] && pointInRing(point, polygon[0]));
+    }
+
+    function pointInRing([x, y], ring) {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const [xi, yi] = ring[i];
+        const [xj, yj] = ring[j];
+        if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+      }
+      return inside;
+    }
+
+    function clearOverlays() {
+      overlays.forEach(overlay => overlay.setMap(null));
+      overlays = [];
+    }
+
+    boot();
+  </script>
+</body>
+</html>
